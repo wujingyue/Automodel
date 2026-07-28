@@ -57,6 +57,10 @@ model:
   attn_implementation: ffpa
   text_config:
     use_cache: false
+    # Required by the FusedLinearCrossEntropy loss below: the recipe invokes the model
+    # with logits_to_keep=1 and feeds the final hidden states to the fused loss instead
+    # of a full logits tensor.
+    output_hidden_states: true
 
 processor:
   padding_side: right
@@ -73,8 +77,17 @@ distributed:
   # Activation checkpointing is required for Gemma4 31B to fit in memory; fsdp alone leads to OOM.
   activation_checkpointing: true
 
+# FusedLinearCrossEntropy folds the lm_head projection into the CE reduction, so the
+# [1, 8192, 262144] logits are never materialized. MaskedCrossEntropy holds 4 GiB of bf16
+# logits alive for backward, 8 GiB more for its fp32 upcast, and needs another 8 GiB for
+# the logits grad -- that last one is the backward allocation that OOM'd this recipe on
+# 80 GiB GPUs (AMINT-203). logit_softcapping mirrors text_config.final_logit_softcapping,
+# which the model otherwise applies to its own logits; reduction must stay `sum` because
+# the recipe normalizes by num_label_tokens itself.
 loss_fn:
-  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
+  _target_: nemo_automodel.components.loss.linear_ce.FusedLinearCrossEntropy
+  logit_softcapping: 30.0
+  reduction: sum
 
 dataset:
   _target_: nemo_automodel.components.datasets.vlm.mock.build_mock_vlm_dataset
