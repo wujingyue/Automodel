@@ -147,3 +147,8 @@ ci:
   recipe_owner: Butterfingrz
   env_vars:
     MAX_STEPS: 10
+    # FSDP's root post-backward reduce-scatter asks for a single 10.50 GiB buffer.
+    # Peak demand is ~58 GiB of 79 GiB, so it fits, but the default allocator strands
+    # enough memory in reserved-but-unallocated blocks that the contiguous request
+    # still fails partway through the run. See AMINT-203.
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
